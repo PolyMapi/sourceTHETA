@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.File;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import org.apache.commons.io.FileUtils;
 
@@ -13,48 +14,74 @@ public class Test {
 	
 	/////////////////PARAMETERS/////////////////
 
-	static int NB_CAPTURE = 15;
-	static int TIMER_INTERVAL = 4000; //milliseconds
+	static int NB_CAPTURE = 10;
+	static int TIMER_INTERVAL = 2000; //milliseconds
 	static int MODE = 2; //  0:Monothread   1:Multithread   2:MonothreadV2
+	static int MAX_ATTEMPTS = 10; // Nombre maximum de tentatives pour une requête
 
 	/////////////////TOOLS/////////////////
 	
 	public static StringBuffer query(String urlString, String data) throws IOException {
-		URL url = new URL(urlString);
 		
-		/* Ouvre une connection avec l'object URL */
-		HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
-		//Methode POST
-		connection.setRequestMethod("POST");
-		connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json"); //
-        
-        // Encodez les données POST à envoyer
-        byte[] postDataBytes = data.getBytes("UTF-8");
-
-		/* Écrit les données dans la requête POST */
-        DataOutputStream wr = new DataOutputStream(connection.getOutputStream());
-        wr.write(postDataBytes);
-        wr.flush();
-        wr.close();
-
-		/* Utilise BufferedReader pour lire ligne par ligne */
-		BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-
-		//La ligne courante
-		String inputLine;
-
 		//Le contenu de la réponse POST
 		StringBuffer content = new StringBuffer();
-
-		/* Pour chaque ligne dans la réponse POST */
-		while ((inputLine = in.readLine()) != null) {
-		 content.append(inputLine);
+		
+		
+		int attemptCount = 0; // Compteur de tentatives
+		while(attemptCount<MAX_ATTEMPTS) {
+			
+			try {
+				URL url = new URL(urlString);
+			
+				/* Ouvre une connection avec l'object URL */
+				HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+		
+				//Methode POST
+				connection.setRequestMethod("POST");
+				connection.setDoOutput(true);
+		        connection.setRequestProperty("Content-Type", "application/json"); //
+		        
+		        // Encodez les données POST à envoyer
+		        byte[] postDataBytes = data.getBytes("UTF-8");
+		
+				/* Écrit les données dans la requête POST */
+		        DataOutputStream wr = new DataOutputStream(connection.getOutputStream());
+		        wr.write(postDataBytes);
+		        wr.flush();
+		        wr.close();
+		
+				/* Utilise BufferedReader pour lire ligne par ligne */
+				BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+		
+				//La ligne courante
+				String inputLine;
+		
+				/* Pour chaque ligne dans la réponse POST */
+				while ((inputLine = in.readLine()) != null) { //attend bien la fin de la requête
+				 content.append(inputLine);
+				}
+		
+				//Ferme BufferedReader
+				in.close();
+				
+		        break; // Sortir de la boucle si la requête réussit
+			
+			} catch (IOException e) {
+				attemptCount++; // Augmenter le compteur de tentatives
+		        if (attemptCount == MAX_ATTEMPTS) {
+		            // Si le nombre maximum de tentatives est atteint, arrêter la boucle
+		            throw e; // Lancer l'exception pour signaler l'échec de la requête
+		        }
+		        // Attendre avant de réessayer la requête
+		        try {
+		            Thread.sleep(2000);
+		        } catch (InterruptedException ex) {
+					ex.printStackTrace();
+		        }
+			}
 		}
-
-		//Ferme BufferedReader
-		in.close();
+		
+		System.out.println("nombre de tentatives : " + (attemptCount + 1));
 		return content;
 	}
 	
@@ -106,10 +133,10 @@ public class Test {
 			
 			//wait image treatment
 			String newfingerprint = fingerprint;
-		    while (newfingerprint == fingerprint) {
+		    while (newfingerprint.equals(fingerprint)) {
 				response = query("http://192.168.1.1/osc/checkForUpdates", "{\"stateFingerprint\" : \"" + fingerprint + "\" }");
 				newfingerprint = getFingerprint(response.toString());
-				Thread.sleep(500);
+				Thread.sleep(100);
 		    }
 		    
 		    //get URL
@@ -162,51 +189,68 @@ public class Test {
 			StringBuffer response = query("http://192.168.1.1/osc/state", "{}");
 //			System.out.println(response);
 			String fingerprint = getFingerprint(response.toString());	
-					
+			
+			long start = System.currentTimeMillis();
 			//take picture
 			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
-			long start = System.currentTimeMillis();
+			System.out.println("photo 0");
 			
-			//wait image treatment
-			String newfingerprint = fingerprint;
-		    while (newfingerprint == fingerprint) {
-				response = query("http://192.168.1.1/osc/checkForUpdates", "{\"stateFingerprint\" : \"" + fingerprint + "\" }");
-				newfingerprint = getFingerprint(response.toString());
-				Thread.sleep(100);
-		    }
+//			//wait image treatment
+//			String newfingerprint = fingerprint;
+//		    while (newfingerprint.equals(fingerprint)) {
+//				response = query("http://192.168.1.1/osc/checkForUpdates", "{\"stateFingerprint\" : \"" + fingerprint + "\" }");
+//				newfingerprint = getFingerprint(response.toString());
+//				//Thread.sleep(100);
+//		    }
 
 			//get fingerprint
 			response = query("http://192.168.1.1/osc/state", "{}");
 			String lastImageUrl = getURL(response.toString());
+			
+			while (lastImageUrl.equals("")) {
+				response = query("http://192.168.1.1/osc/state", "{}");
+				lastImageUrl = getURL(response.toString());
+			}
+			
 			int nameRef = getNameRef(lastImageUrl);
-	
-			for(int i=1; i<=NB_CAPTURE; i++) {	
+			
+			long stop = System.currentTimeMillis();
+			long elapsed = stop - start;
+			
+			if(elapsed < TIMER_INTERVAL) { //if the init take less time than timer_interval
+				Thread.sleep(TIMER_INTERVAL - elapsed);
+				stop = System.currentTimeMillis();
+				elapsed = (stop - start);
+			}	
+
+			System.out.println(elapsed + "ms -> photo 1");
+			
+			for(int i=1; i<NB_CAPTURE; i++) {	
+				start = System.currentTimeMillis();
 				
-				long stop = System.currentTimeMillis();
-				long elapsed = (stop - start);
-				if((i==1) && (elapsed < TIMER_INTERVAL)) {
-					Thread.sleep(TIMER_INTERVAL - elapsed);
-					stop = System.currentTimeMillis();
-					elapsed = (stop - start);
-					System.out.println("photo " + (i-1) + " : " + elapsed + "ms");			
-				} else {
-					System.out.println("photo " + (i-1) + " : " + elapsed + "ms");
-				}
-	
 				//take picture
 				response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
-				start = System.currentTimeMillis();
-				Thread.sleep(TIMER_INTERVAL);
+				if (i==(NB_CAPTURE-1)) { //we don't want to wait after the last capture
+					break;
+				}
+				
+				//wait
+				long tmp =  System.currentTimeMillis();
+				long elapsed_tmp = tmp - start;
+				if (elapsed_tmp < TIMER_INTERVAL) {
+					Thread.sleep(TIMER_INTERVAL - elapsed_tmp ); //wait timer_interval - capture_time
+				} else {
+					//?
+				}
+				
+				stop = System.currentTimeMillis();
+				elapsed = stop - start;
+
+				System.out.println(elapsed + "ms ->  photo " + (i+1));		
+
 			}
-//			
-//		    while (true) {
-//		    	StringBuffer res = query("http://192.168.1.1/osc/state", "{}");
-//				System.out.println(getFingerprint(res.toString()));
-//				Thread.sleep(500);
-//		    }
-			
-			//Thread.sleep(20000); //attendre la fin de traitement des images
-			
+
+			//download all pictures
 			for(int i=0; i<NB_CAPTURE; i++) {
 				String imageRef = String.format("%07d", nameRef + i);
 	
@@ -215,8 +259,8 @@ public class Test {
 				URL url = new URL("http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRef + ".JPG");
 				File download = new File("./pictures/R" + imageRef + ".JPG");
 				FileUtils.copyURLToFile(url, download);
-				long stop = System.currentTimeMillis();
-				long elapsed = (stop - start);
+				stop = System.currentTimeMillis();
+				elapsed = (stop - start);
 				System.out.println("telechargement " + i + " : " + elapsed + "ms");
 			}
 			
@@ -233,16 +277,20 @@ public class Test {
 		
 		long start = System.currentTimeMillis();
 		
+		//begin session and get sessionId
+		StringBuffer response;
 		String sessionId = "";
 		try {
-			//begin session and get sessionId
-			StringBuffer response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.startSession\" }");
+			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.startSession\" }");
 			sessionId = getSessionId(response.toString());
 			//set options
 			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\": \"camera.setOptions\",\"parameters\": {\"sessionId\": \"" + sessionId + "\" ,\"options\": {\"clientVersion\": 2}}}");
-		} catch (IOException e1) {
-			e1.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
+		
+	
 
 		//Test choice
 		if (MODE == 0) {
