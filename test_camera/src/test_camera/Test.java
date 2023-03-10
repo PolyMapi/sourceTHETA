@@ -12,11 +12,13 @@ import org.apache.commons.io.FileUtils;
 
 public class Test {
 	
+	private static int nameRef;
+	
 	/////////////////PARAMETERS/////////////////
 
-	static int NB_CAPTURE = 10;
-	static int TIMER_INTERVAL = 2000; //milliseconds
-	static int MODE = 2; //  0:Monothread   1:Multithread   2:MonothreadV2
+	static int NB_CAPTURE = 1600;
+	static int TIMER_INTERVAL = 4500; //milliseconds
+	static int MODE = 2; //  0:Monothread   1:Multithread   2:MonothreadV2   3:ModuleFunctions
 	static int MAX_ATTEMPTS = 10; // Nombre maximum de tentatives pour une requête
 
 	/////////////////TOOLS/////////////////
@@ -78,13 +80,13 @@ public class Test {
 		        } catch (InterruptedException ex) {
 					ex.printStackTrace();
 		        }
+				e.printStackTrace();
 			}
 		}
 		
 		System.out.println("nombre de tentatives : " + (attemptCount + 1));
 		return content;
 	}
-	
 	
 	public static String getSessionId(String response) {
 		String res = response.split("SID_")[1];
@@ -114,6 +116,133 @@ public class Test {
 		}
 		return nameRef;
 	}
+	
+	/////////////////FUNCTIONS/////////////////
+		
+	public static String initCamera(boolean highResolution) {
+		nameRef = 0;
+		String sessionId = "";
+		try {
+		    //begin session and get sessionId
+		    StringBuffer response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.startSession\" }");
+		    sessionId = getSessionId(response.toString());
+		    
+		    //set options
+	    	response = query("http://192.168.1.1/osc/commands/execute", "{\"name\": \"camera.setOptions\",\"parameters\": {\"sessionId\": \"" + sessionId + "\" ,\"options\": {\"clientVersion\": 2}}}");
+
+	    	//set resolution
+		    if (highResolution) {
+		    	response = query("http://192.168.1.1/osc/commands/execute", "{\"name\": \"camera.setOptions\",\"parameters\": {\"options\": {\"fileFormat\": {\"type\": \"jpeg\",\"width\": 5376,\"height\": 2688}}}}");
+		    } else {
+		    	response = query("http://192.168.1.1/osc/commands/execute", "{\"name\": \"camera.setOptions\",\"parameters\": {\"options\": {\"fileFormat\": {\"type\": \"jpeg\",\"width\": 2048,\"height\": 1024}}}}");
+		    }
+		} catch (IOException e) {
+		    e.printStackTrace();
+		}
+		return sessionId;
+	}
+	
+	//A TESTER
+	//TODO mettre un attribut gerant le nameRef pour éviter d'avoir à attendre le traitement de photo
+	public static String takePicture(){
+		long start = System.currentTimeMillis();
+		String imageRef = "";
+		try {
+		    StringBuffer response = query("http://192.168.1.1/osc/state", "{}");
+		    String lastImageUrl = getURL(response.toString());
+		
+		    if (!lastImageUrl.equals("")) {
+		        response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
+		        if (nameRef == 0) {
+		        	nameRef = getNameRef(lastImageUrl);
+		        }
+		        nameRef += 1;
+		        imageRef = String.format("%07d", nameRef);
+		    } else {
+		        String url = "";
+		        response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
+		        while (url.equals("")) {
+		            response = query("http://192.168.1.1/osc/state", "{}");
+		            url = getURL(response.toString());
+		        }
+		        nameRef = getNameRef(url);
+		        imageRef = String.format("%07d", nameRef);
+		    }
+		} catch (IOException e) {
+		    e.printStackTrace();
+		}
+		
+		long stop = System.currentTimeMillis();
+		long elapsed = stop - start;
+		System.out.println("Photo " + imageRef + " : " + elapsed + "ms");
+		return imageRef;
+	}
+	
+	//?
+	public static String[] takeNPictures(int n, int time_interval){
+		String[] imageRefs = new String[n];
+		
+		return imageRefs;
+	}
+	
+	//?
+	public static String[] takePicturesDuringTimer(int timer, int time_interval){
+		String[] imageRefs = new String[10];
+		
+		return imageRefs;
+	}
+	
+	public static void downloadPicture(String imageRef){
+		long start = System.currentTimeMillis();
+		
+		//download image in pictures directory
+		try {
+		    URL url = new URL("http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRef + ".JPG");
+		    File download = new File("./pictures/R" + imageRef + ".JPG");
+		    FileUtils.copyURLToFile(url, download);
+		} catch (IOException e) {
+		    throw new RuntimeException(e);
+		}
+		long stop = System.currentTimeMillis();
+		long elapsed = stop - start;
+		System.out.println("Download " + imageRef + " : " + elapsed + "ms");
+	}
+		
+	public static void downloadPictures(String[] imageRefs){
+		for (int i=0; i<imageRefs.length; i++){
+		    downloadPicture(imageRefs[i]);
+		}
+	}
+	
+	public static void clearPictures() {
+		File directory = new File("./pictures");
+        
+        if (directory.exists() && directory.isDirectory()) {
+            File[] files = directory.listFiles();
+            
+            if (files != null) {
+                for (File file : files) {
+                    file.delete();
+                }
+            }
+        }
+	}
+	
+	public static void delete(String[] imageRefs) {
+		try {
+			String content = "{\"name\" : \"camera.delete\", ,\"parameters\": {\"fileUrls\": [";
+			for (int i=0; i<imageRefs.length-1; i++) {		
+				content += "\"http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRefs[i] + ".JPG\", ";
+			}
+			content += "\"http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRefs[imageRefs.length -1] + ".JPG\" ]}}";
+			StringBuffer response = query("http://192.168.1.1/osc/commands/execute", content);
+			System.out.println(response);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+
 	
 	/////////////////TESTS/////////////////
 
@@ -156,8 +285,6 @@ public class Test {
 		} 
 	}
 
-	
-	
 	//Multithreaded execution
 	public static void multiThreadTest(String sessionId) {
 		
@@ -186,13 +313,13 @@ public class Test {
 	//Monothreaded execution v2
 	public static void monoThreadTestV2(String sessionId) {
 		try {			
-			StringBuffer response = query("http://192.168.1.1/osc/state", "{}");
-//			System.out.println(response);
-			String fingerprint = getFingerprint(response.toString());	
+//			StringBuffer response = query("http://192.168.1.1/osc/state", "{}");
+////			System.out.println(response);
+//			String fingerprint = getFingerprint(response.toString());	
 			
 			long start = System.currentTimeMillis();
 			//take picture
-			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
+			StringBuffer response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.takePicture\"}");
 			System.out.println("photo 0");
 			
 //			//wait image treatment
@@ -203,7 +330,6 @@ public class Test {
 //				//Thread.sleep(100);
 //		    }
 
-			//get fingerprint
 			response = query("http://192.168.1.1/osc/state", "{}");
 			String lastImageUrl = getURL(response.toString());
 			
@@ -251,22 +377,38 @@ public class Test {
 			}
 
 			//download all pictures
-			for(int i=0; i<NB_CAPTURE; i++) {
-				String imageRef = String.format("%07d", nameRef + i);
-	
-				start = System.currentTimeMillis();
-				//download image in pictures directory
-				URL url = new URL("http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRef + ".JPG");
-				File download = new File("./pictures/R" + imageRef + ".JPG");
-				FileUtils.copyURLToFile(url, download);
-				stop = System.currentTimeMillis();
-				elapsed = (stop - start);
-				System.out.println("telechargement " + i + " : " + elapsed + "ms");
-			}
+//			for(int i=0; i<NB_CAPTURE; i++) {
+//				String imageRef = String.format("%07d", nameRef + i);
+//	
+//				start = System.currentTimeMillis();
+//				//download image in pictures directory
+//				URL url = new URL("http://192.168.1.1/files/035344534c303847803aea0cf9010c01/100RICOH/R" + imageRef + ".JPG");
+//				File download = new File("./pictures/R" + imageRef + ".JPG");
+//				FileUtils.copyURLToFile(url, download);
+//				stop = System.currentTimeMillis();
+//				elapsed = (stop - start);
+//				System.out.println("telechargement " + i + " : " + elapsed + "ms");
+//			}
 			
 		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 		} 
+	}
+	
+	public static void moduleFunctionTest(){
+		clearPictures();
+		
+		String[] imageRefs = new String[NB_CAPTURE];
+		for (int i=0; i<NB_CAPTURE; i++) {
+			imageRefs[i] = takePicture();
+			try {
+				Thread.sleep(TIMER_INTERVAL);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+		downloadPictures(imageRefs);
+//		delete(imageRefs);
 	}
 	
 	
@@ -278,35 +420,26 @@ public class Test {
 		long start = System.currentTimeMillis();
 		
 		//begin session and get sessionId
-		StringBuffer response;
-		String sessionId = "";
-		try {
-			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\" : \"camera.startSession\" }");
-			sessionId = getSessionId(response.toString());
-			//set options
-			response = query("http://192.168.1.1/osc/commands/execute", "{\"name\": \"camera.setOptions\",\"parameters\": {\"sessionId\": \"" + sessionId + "\" ,\"options\": {\"clientVersion\": 2}}}");
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-	
+		String sessionId = initCamera(false);
 
 		//Test choice
 		if (MODE == 0) {
 			monoThreadTest(sessionId);
 		} else if (MODE == 1) {
 			multiThreadTest(sessionId);
-		} else {
+		} else if (MODE == 2){
 			monoThreadTestV2(sessionId);
+		} else {
+			moduleFunctionTest();
 		}
+		
+		//clearPictures();
 		
 		long stop = System.currentTimeMillis();
 		long elapsed = (stop - start) / 1000;
 		System.out.println("END");
 		System.out.println("Durée d'exécution totale : " + elapsed + "s");
-		
-		
+
 	}
 
 }
